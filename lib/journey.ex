@@ -1,7 +1,3 @@
-defmodule Journey.Step do
-  defstruct [:spec, :transaction, :compensation]
-end
-
 defmodule Journey do
   defstruct data: nil, steps: [], state: :new, result: nil
 

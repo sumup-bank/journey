@@ -30,7 +30,13 @@ defmodule Journey do
   end
 
   def await(%Step{transaction: {func, %Task{} = task}} = step) do
-    %Step{step | transaction: {func, Task.await(task)}}
+    result =
+      case Task.yield(task) do
+        {:ok, result} -> result
+        {:exit, error} -> {:error, error}
+      end
+
+    %Step{step | transaction: {func, result}}
   end
 
   def await(step), do: step
@@ -59,26 +65,36 @@ defmodule Journey do
   defp mk_step(%__MODULE__{} = journey, spec, args, type) do
     {transaction, compensation} = get_funcs(spec, args)
 
-    step = %Step{
-      spec: {spec, args},
-      compensation: {compensation, nil},
-      transaction: {transaction, call(transaction, journey, type)}
-    }
-
-    update_steps(journey, journey.steps ++ [step])
+    update_steps(
+      journey,
+      journey.steps ++
+        [
+          %Step{
+            spec: {spec, args},
+            compensation: {compensation, nil},
+            transaction: {transaction, call(transaction, journey, type)}
+          }
+        ]
+    )
   end
 
   defguardp is_valid_function(func) when is_function(func, 0) or is_function(func, 1)
   defguardp is_ok(result) when result == :ok or elem(result, 0) == :ok
 
-  defp call(func, journey, :async) do
-    call(fn -> Task.async(func) end, journey, :sync)
+  defp call(transaction, journey, :async) do
+    Task.async(fn -> call(transaction, journey, :sync) end)
   end
 
-  defp call(func, _, _) when is_function(func, 0), do: func.()
+  defp call(func, journey, type) when is_function(func, 0) do
+    call(fn _ -> func.() end, journey, type)
+  end
 
   defp call(func, %__MODULE__{} = journey, _) when is_function(func, 1) do
-    func.(journey)
+    try do
+      func.(journey)
+    rescue
+      error -> {:error, error}
+    end
   end
 
   defp get_funcs({module, function_name}, args) do
@@ -86,7 +102,7 @@ defmodule Journey do
   end
 
   defp get_funcs(func, _) when is_function(func) do
-    func.() |> extract_funcs()
+    extract_funcs(func.())
   end
 
   defp extract_funcs({transaction, compensation} = funcs)

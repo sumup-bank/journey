@@ -134,12 +134,18 @@ defmodule JourneyTest do
     end
 
     test "run compensation if async transaction fail", %{journey: journey} do
+      fn_sleep = fn ->
+        :timer.sleep(300)
+        :ok
+      end
+
       result =
         journey
         |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}])
         |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
         |> Journey.run_async({__MODULE__, :test_compensation}, [{:ok, :any}])
         |> Journey.run({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn_sleep])
         |> Journey.run_async({__MODULE__, :test_compensation}, [{:error, :any}])
         # Step will not add because before step will failed
         |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}])
@@ -164,11 +170,68 @@ defmodule JourneyTest do
                  compensation: {_, :ok}
                },
                %Step{
+                 transaction: {_, :ok},
+                 compensation: {_, :ok}
+               },
+               %Step{
                  transaction: {_, {:error, :any}},
                  compensation: {_, nil}
                }
              ] = steps
     end
+
+    test "run compensation if sync transaction raise a exception", %{journey: journey} do
+      result =
+        journey
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run({__MODULE__, :test_compensation}, [fn -> raise "Any error" end])
+        # Step will not add because before step will failed
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+
+      error = {:error, %RuntimeError{message: "Any error"}}
+      assert %Journey{result: ^error, state: :failed, steps: steps} = result
+
+      assert [
+               %Step{
+                 transaction: {_, :ok},
+                 compensation: {_, :ok}
+               },
+               %Step{
+                 transaction: {_, ^error},
+                 compensation: {_, nil}
+               }
+             ] = steps
+    end
+
+    test "run compensation if async transaction raise a exception", %{journey: journey} do
+      result =
+        journey
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> raise "Any error" end])
+        # Step will not add because before step will failed
+        |> Journey.run({__MODULE__, :test_compensation}, [:ok])
+
+      error = {:error, %RuntimeError{message: "Any error"}}
+      assert %Journey{result: ^error, state: :failed, steps: steps} = result
+
+      assert [
+               %Step{
+                 transaction: {_, :ok},
+                 compensation: {_, :ok}
+               },
+               %Step{
+                 transaction: {_, ^error},
+                 compensation: {_, nil}
+               }
+             ] = steps
+    end
+  end
+
+  def test_compensation(result) when is_function(result) do
+    {
+      fn -> result.() end,
+      fn -> :ok end
+    }
   end
 
   def test_compensation(result) do

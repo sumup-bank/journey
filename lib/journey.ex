@@ -12,11 +12,11 @@ defmodule Journey do
   end
 
   def run(%__MODULE__{} = journey, spec, args \\ []) do
-    add_step(journey, spec, args, :sync)
+    add_step(journey, {spec, args}, :sync)
   end
 
-  def run_async(%__MODULE__{} = journey, spec, args \\ []) do
-    add_step(journey, spec, args, :async)
+  def run_async(%__MODULE__{} = journey, spec, args \\ [], timeout \\ 5000) do
+    add_step(journey, {spec, args, timeout}, :async)
   end
 
   def await(%__MODULE__{steps: steps} = journey) do
@@ -25,11 +25,12 @@ defmodule Journey do
     |> check_results()
   end
 
-  def await(%Step{transaction: {func, %Task{} = task}} = step) do
+  def await(%Step{spec: {_, _, timeout}, transaction: {func, %Task{} = task}} = step) do
     result =
-      case Task.yield(task) do
+      case Task.yield(task, timeout) do
         {:ok, result} -> result
         {:exit, error} -> {:error, error}
+        nil -> {:error, {:timeout, step}}
       end
 
     %Step{step | transaction: {func, result}}
@@ -45,28 +46,28 @@ defmodule Journey do
     finally(journey, fn %{result: result} -> result end)
   end
 
-  defp add_step(%__MODULE__{} = journey, spec, args, :sync = type) do
+  defp add_step(%__MODULE__{} = journey, spec, :sync = type) do
     journey
     |> await()
-    |> mk_step(spec, args, type)
+    |> mk_step(spec, type)
     |> await()
   end
 
-  defp add_step(%__MODULE__{} = journey, spec, args, type) do
-    mk_step(journey, spec, args, type)
+  defp add_step(%__MODULE__{} = journey, spec, type) do
+    mk_step(journey, spec, type)
   end
 
-  defp mk_step(%__MODULE__{state: :failed} = journey, _, _, _), do: journey
+  defp mk_step(%__MODULE__{state: :failed} = journey, _, _), do: journey
 
-  defp mk_step(%__MODULE__{} = journey, spec, args, type) do
-    {transaction, compensation} = get_funcs(spec, args)
+  defp mk_step(%__MODULE__{} = journey, spec, type) do
+    {transaction, compensation} = get_funcs(spec)
 
     update_steps(
       journey,
       journey.steps ++
         [
           %Step{
-            spec: {spec, args},
+            spec: spec,
             compensation: {compensation, nil},
             transaction: {transaction, call(transaction, journey, type)}
           }
@@ -93,12 +94,14 @@ defmodule Journey do
     end
   end
 
-  defp get_funcs({module, function_name}, args) do
-    apply(module, function_name, args) |> extract_funcs()
+  defp get_funcs({spec, args}), do: get_funcs({spec, args, 0})
+
+  defp get_funcs({func, _, _}) when is_function(func) do
+    extract_funcs(func.())
   end
 
-  defp get_funcs(func, _) when is_function(func) do
-    extract_funcs(func.())
+  defp get_funcs({{module, function_name}, args, _}) do
+    extract_funcs(apply(module, function_name, args))
   end
 
   defp extract_funcs({transaction, compensation} = funcs)

@@ -1,6 +1,6 @@
 # Journey
 
-A simple sagas pattern implementation in Elixir
+A simple [sagas](https://microservices.io/patterns/data/saga.html) pattern implementation in Elixir
 
 ## Installation
 
@@ -18,4 +18,3 @@ end
 Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/journey](https://hexdocs.pm/journey).
-

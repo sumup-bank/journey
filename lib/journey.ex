@@ -22,7 +22,7 @@ defmodule Journey do
   def await(%__MODULE__{steps: steps} = journey) do
     journey
     |> update_steps(Enum.map(steps, &await(&1)))
-    |> run_compensation?()
+    |> check_results()
   end
 
   def await(%Step{transaction: {func, %Task{} = task}} = step) do
@@ -107,7 +107,7 @@ defmodule Journey do
 
   defp extract_funcs(transaction) when is_valid_function(transaction), do: {transaction, nil}
 
-  defp run_compensation?(%__MODULE__{steps: steps} = journey) do
+  defp check_results(%__MODULE__{steps: steps} = journey) do
     with true <-
            Enum.any?(steps, fn
              %Step{transaction: {_, result}} when is_ok(result) -> false

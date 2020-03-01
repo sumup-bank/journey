@@ -225,6 +225,29 @@ defmodule JourneyTest do
                }
              ] = steps
     end
+
+    test "run compensation if await a async transaction ended with timeout", %{journey: journey} do
+      result =
+        journey
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> :timer.sleep(500) end], 50)
+        # Step will not be added because previous step has failed due to timeout
+        |> Journey.run({__MODULE__, :test_compensation}, [:ok])
+
+        assert %Journey{result: error, state: :failed, steps: steps} = result
+        assert {:error, {:timeout, %Step{spec: {{__MODULE__, :test_compensation}, _, 50}}}} = error
+
+        assert [
+                 %Step{
+                   transaction: {_, :ok},
+                   compensation: {_, :ok}
+                 },
+                 %Step{
+                   transaction: {_, {:error, {:timeout, %Step{}}}},
+                   compensation: {_, nil}
+                 }
+               ] = steps
+    end
   end
 
   def test_compensation(result) when is_function(result) do

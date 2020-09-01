@@ -1,6 +1,7 @@
 defmodule JourneyTest do
   use ExUnit.Case
 
+  require Logger
   alias Journey.Step
 
   describe "with a new journey" do
@@ -48,19 +49,19 @@ defmodule JourneyTest do
       assert [
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                }
              ] = steps
     end
@@ -114,23 +115,27 @@ defmodule JourneyTest do
     test "run compensation if sync transaction fail", %{journey: journey} do
       result =
         journey
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run({__MODULE__, :test_compensation}, [:error])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run({__MODULE__, :test_compensation}, [:error, self()])
         # Step will not add because before step will failed
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
 
       assert %Journey{result: :error, state: :failed, steps: steps} = result
 
       assert [
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, :error},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                }
              ] = steps
+
+      assert_receive :transaction_called
+      assert_receive :compensation_called
+      refute_receive :compensation_called
     end
 
     test "run compensation if async transaction fail", %{journey: journey} do
@@ -141,52 +146,57 @@ defmodule JourneyTest do
 
       result =
         journey
-        |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [{:ok, :any}])
-        |> Journey.run({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [fn_sleep])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [{:error, :any}])
+        |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [{:ok, :any}, self()])
+        |> Journey.run({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn_sleep, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [{:error, :any}, self()])
         # Step will not add because before step will failed
-        |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}])
+        |> Journey.run({__MODULE__, :test_compensation}, [{:ok, :any}, self()])
 
       assert %Journey{result: {:error, :any}, state: :failed, steps: steps} = result
 
       assert [
                %Step{
                  transaction: {_, {:ok, :any}},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, {:ok, :any}},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, {:error, :any}},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                }
              ] = steps
+
+      # Only call once each transaction
+      for _ <- 1..6, do: assert_receive :transaction_called
+      for _ <- 1..5, do: assert_receive :compensation_called
+      refute_receive :compensation_called
     end
 
     test "run compensation if sync transaction raise a exception", %{journey: journey} do
       result =
         journey
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run({__MODULE__, :test_compensation}, [fn -> raise "Any error" end])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run({__MODULE__, :test_compensation}, [fn -> raise "Any error" end, self()])
         # Step will not add because before step will failed
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
 
       error = {:error, %RuntimeError{message: "Any error"}}
       assert %Journey{result: ^error, state: :failed, steps: steps} = result
@@ -194,22 +204,26 @@ defmodule JourneyTest do
       assert [
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, ^error},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                }
              ] = steps
+
+      assert_receive :transaction_called
+      assert_receive :compensation_called
+      refute_receive :compensation_called
     end
 
     test "run compensation if async transaction raise a exception", %{journey: journey} do
       result =
         journey
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> raise "Any error" end])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> raise "Any error" end, self()])
         # Step will not add because before step will failed
-        |> Journey.run({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run({__MODULE__, :test_compensation}, [:ok, self()])
 
       error = {:error, %RuntimeError{message: "Any error"}}
       assert %Journey{result: ^error, state: :failed, steps: steps} = result
@@ -217,50 +231,61 @@ defmodule JourneyTest do
       assert [
                %Step{
                  transaction: {_, :ok},
-                 compensation: {_, :ok}
+                 compensation: {_, :ok, :called}
                },
                %Step{
                  transaction: {_, ^error},
-                 compensation: {_, nil}
+                 compensation: {_, nil, :not_called}
                }
              ] = steps
+
+      assert_receive :transaction_called
+      assert_receive :compensation_called
+      refute_receive :compensation_called
     end
 
     test "run compensation if await a async transaction ended with timeout", %{journey: journey} do
       result =
         journey
-        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok])
-        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> :timer.sleep(500) end], 50)
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run_async({__MODULE__, :test_compensation}, [fn -> :timer.sleep(500) end, self()], 50)
         # Step will not be added because previous step has failed due to timeout
-        |> Journey.run({__MODULE__, :test_compensation}, [:ok])
+        |> Journey.run({__MODULE__, :test_compensation}, [:ok, self()])
 
-        assert %Journey{result: error, state: :failed, steps: steps} = result
-        assert {:error, {:timeout, %Step{spec: {{__MODULE__, :test_compensation}, _, 50}}}} = error
+      assert %Journey{result: error, state: :failed, steps: steps} = result
+      assert {:error, {:timeout, %Step{spec: {{__MODULE__, :test_compensation}, _, 50}}}} = error
 
-        assert [
-                 %Step{
-                   transaction: {_, :ok},
-                   compensation: {_, :ok}
-                 },
-                 %Step{
-                   transaction: {_, {:error, {:timeout, %Step{}}}},
-                   compensation: {_, nil}
-                 }
-               ] = steps
+      assert [
+               %Step{
+                 transaction: {_, :ok},
+                 compensation: {_, :ok, :called}
+               },
+               %Step{
+                 transaction: {_, {:error, {:timeout, %Step{}}}},
+                 compensation: {_, nil, :not_called}
+               }
+             ] = steps
+
+      assert_receive :transaction_called
+      assert_receive :compensation_called
+      refute_receive :compensation_called
     end
   end
 
-  def test_compensation(result) when is_function(result) do
-    {
-      fn -> result.() end,
-      fn -> :ok end
-    }
+  def test_compensation(result, pid) when not is_function(result) do
+    test_compensation(fn -> result end, pid)
   end
 
-  def test_compensation(result) do
+  def test_compensation(result, pid) do
     {
-      fn -> result end,
-      fn -> :ok end
+      fn ->
+        send(pid, :transaction_called)
+        result.()
+      end,
+      fn ->
+        send(pid, :compensation_called)
+        :ok
+      end
     }
   end
 

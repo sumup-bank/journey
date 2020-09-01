@@ -68,7 +68,7 @@ defmodule Journey do
         [
           %Step{
             spec: spec,
-            compensation: {compensation, nil},
+            compensation: {compensation, nil, :not_called},
             transaction: {transaction, call(transaction, journey, type)}
           }
         ]
@@ -116,13 +116,15 @@ defmodule Journey do
              %Step{transaction: {_, result}} when is_ok(result) -> false
              _ -> true
            end) do
-      rollback(%__MODULE__{journey | state: :failed})
+      rollback(journey)
     else
       _ -> journey
     end
   end
 
   defp rollback(%__MODULE__{steps: steps} = journey) do
+    journey = %__MODULE__{journey | state: :failed}
+
     steps =
       steps
       |> Enum.reverse()
@@ -133,11 +135,11 @@ defmodule Journey do
   end
 
   defp call_compensation(
-         %Step{compensation: {func, _}, transaction: {_, result}} = step,
+         %Step{compensation: {func, _, :not_called}, transaction: {_, result}} = step,
          journey
        )
        when is_function(func) and is_ok(result) do
-    %Step{step | compensation: {func, call(func, journey, :sync)}}
+    %Step{step | compensation: {func, call(func, journey, :sync), :called}}
   end
 
   defp call_compensation(step, _journey), do: step

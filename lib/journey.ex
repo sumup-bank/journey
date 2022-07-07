@@ -89,8 +89,9 @@ defmodule Journey do
   defp call(func, %__MODULE__{} = journey, _) when is_function(func, 1) do
     try do
       func.(journey)
-    rescue
+    catch
       error -> {:error, error}
+      error,reason -> {:error, {error, reason}}
     end
   end
 

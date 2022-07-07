@@ -224,7 +224,7 @@ defmodule JourneyTest do
         journey
         |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
         |> Journey.run({__MODULE__, :test_compensation}, [fn -> exit :timeout end, self()])
-        # Step will not add because before step will failed
+        # This step will not be added because previous step will have failed
         |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
 
       error = {:error, {:exit, :timeout}}

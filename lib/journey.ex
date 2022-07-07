@@ -90,7 +90,7 @@ defmodule Journey do
     try do
       func.(journey)
     catch
-      error -> {:error, error}
+      :error,reason -> {:error, reason}
       error,reason -> {:error, {error, reason}}
     end
   end

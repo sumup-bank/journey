@@ -31,9 +31,11 @@ defmodule JourneyTest do
         |> Journey.run(fn -> sync_step() end)
         |> Journey.run_async({__MODULE__, :async_step}, [3, :ok])
 
+      self = self()
+
       assert %Journey{steps: [sync, async], state: :running, result: nil} = journey
       assert %Step{transaction: {_, :ok}} = sync
-      assert %Step{transaction: {_, %Task{owner: self}}} = async
+      assert %Step{transaction: {_, %Task{owner: ^self}}} = async
     end
 
     test "sync step wait for async steps", %{journey: journey} do
@@ -199,6 +201,33 @@ defmodule JourneyTest do
         |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
 
       error = {:error, %RuntimeError{message: "Any error"}}
+      assert %Journey{result: ^error, state: :failed, steps: steps} = result
+
+      assert [
+               %Step{
+                 transaction: {_, :ok},
+                 compensation: {_, :ok, :called}
+               },
+               %Step{
+                 transaction: {_, ^error},
+                 compensation: {_, nil, :not_called}
+               }
+             ] = steps
+
+      assert_receive :transaction_called
+      assert_receive :compensation_called
+      refute_receive :compensation_called
+    end
+
+    test "run compensation if sync transaction raise an (EXIT) exception", %{journey: journey} do
+      result =
+        journey
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+        |> Journey.run({__MODULE__, :test_compensation}, [fn -> exit :timeout end, self()])
+        # This step will not be added because previous step will have failed
+        |> Journey.run_async({__MODULE__, :test_compensation}, [:ok, self()])
+
+      error = {:error, {:exit, :timeout}}
       assert %Journey{result: ^error, state: :failed, steps: steps} = result
 
       assert [
